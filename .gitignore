@@ -4,3 +4,7 @@ conv_cache/
 .venv/
 .pyc
 .idea/
+__pycache__/
+*.pyc
+*.pyo
+

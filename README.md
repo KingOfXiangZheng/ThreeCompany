@@ -1,4 +1,4 @@
-# 2026-05-05：第一家 KO: ChatGPT **GPT-5.5-thinking**
+# 2026-05-05：第一家 : ChatGPT **GPT-5.5-thinking**
 
 国内模型：https://www.openproxy.cn/token-free/
 
@@ -14,7 +14,7 @@
 - 对 403 / SSE 解析失败 / handoff 失败提供 fallback
 
 
-# 2026-05-12：第二家 KO: Gemini **gemini-3.1-pro**
+# 2026-05-12：第二家 : Gemini **gemini-3.1-pro**
 
 ## 功能
 
@@ -24,7 +24,7 @@
 - 支持 conversation 缓存，尽量保持上下文连续
 - 支持 `fast`、`think`、`pro(gemini-3.1-pro)` 等模式
 
-# 2026-05-15：第三家 KO: Claude **claude-sont-4.6**
+# 2026-05-15：第三家 : Claude **claude-sont-4.6**
 
 ## 功能
 

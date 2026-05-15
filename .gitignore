@@ -3,3 +3,4 @@ chrome_data/
 conv_cache/
 .venv/
 .pyc
+.idea/

@@ -19,6 +19,7 @@ dependencies = [
     "uvicorn>=0.29.0",
     "openai>=1.0.0",
     "websockets>=16.0",
+    "requests>=2.34.2",
 ]
 
 [build-system]

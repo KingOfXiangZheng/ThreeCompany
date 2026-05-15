@@ -60,6 +60,20 @@ def user_messages_fingerprint_for_lookup(messages: list[dict[str, Any]], include
     return _hash_user_messages(user_messages)
 
 
+def user_message_fingerprints_for_lookup(messages: list[dict[str, Any]]) -> list[str]:
+    """Return lookup fingerprints from longest to shortest real-user prefix."""
+    user_messages = _real_user_message_texts(messages)
+    if messages:
+        last_msg = messages[-1]
+        if last_msg.get("role") == "user" and not last_msg.get("_is_tool_result_inline"):
+            user_messages = user_messages[:-1]
+    return [
+        fingerprint
+        for fingerprint in (_hash_user_messages(user_messages[:index]) for index in range(len(user_messages), 0, -1))
+        if fingerprint
+    ]
+
+
 def tools_hash(tools: list[dict[str, Any]] | None) -> str:
     """Hash tool definitions to detect changes."""
     if not tools:
@@ -69,6 +83,11 @@ def tools_hash(tools: list[dict[str, Any]] | None) -> str:
         fn = tool.get("function", tool)
         stable.append({"name": fn.get("name", ""), "parameters": fn.get("parameters", {})})
     return hashlib.md5(json.dumps(stable, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _scoped_fingerprint_key(fingerprint: str, model: str | None, tools_hash_value: str) -> str:
+    scope = hashlib.md5(f"{model or ''}:{tools_hash_value}".encode()).hexdigest()
+    return f"user_fp_{scope}_{fingerprint}"
 
 
 def cache_path() -> Path:
@@ -122,16 +141,51 @@ def lookup_conversation(
 
     if explicit_conversation_id:
         safe_print(f"Trying explicit conversation_id: {explicit_conversation_id}")
+        cached_model = cache.get(f"model_{explicit_conversation_id}", "")
+        if model and cached_model and cached_model != model:
+            safe_print(
+                f"Explicit conversation_id model mismatch: cached={cached_model}, requested={model}. Starting new."
+            )
+            return None, None, True
         cached_tools_hash = cache.get(f"tools_{explicit_conversation_id}", "")
         return explicit_conversation_id, None, cached_tools_hash != current_tools_hash
 
-    fingerprint = user_messages_fingerprint_for_lookup(messages)
-    if not fingerprint:
+    lookup_fingerprints = user_message_fingerprints_for_lookup(messages)
+    fingerprint = lookup_fingerprints[0] if lookup_fingerprints else ""
+    if not lookup_fingerprints:
         safe_print("No conversation history to match, starting new conversation")
         return None, None, True
 
     safe_print(f"Looking for conversation with fingerprint: {fingerprint}")
-    cached = cache.get(f"user_fp_{fingerprint}")
+    scoped_key = _scoped_fingerprint_key(fingerprint, model, current_tools_hash)
+    cached = cache.get(scoped_key)
+    if not isinstance(cached, dict):
+        safe_print(
+            f"No scoped conversation for model={model or '-'}, tools_hash={current_tools_hash or '-'}"
+        )
+        alternate_models = []
+        suffix = f"_{fingerprint}"
+        for key, value in cache.items():
+            if key.startswith("user_fp_") and key.endswith(suffix) and isinstance(value, dict):
+                alternate_models.append(str(value.get("model") or "unknown"))
+        if alternate_models:
+            safe_print(
+                "Found same fingerprint under other model scopes: "
+                + ", ".join(sorted(set(alternate_models)))
+            )
+        cached = cache.get(f"user_fp_{fingerprint}")
+
+    if not isinstance(cached, dict):
+        for fallback_fingerprint in lookup_fingerprints[1:]:
+            fallback_key = _scoped_fingerprint_key(fallback_fingerprint, model, current_tools_hash)
+            fallback_cached = cache.get(fallback_key)
+            if isinstance(fallback_cached, dict) and fallback_cached.get("conv_id"):
+                safe_print(
+                    "Falling back to earlier same-model conversation prefix: "
+                    f"{fallback_fingerprint}"
+                )
+                cached = fallback_cached
+                break
 
     if isinstance(cached, dict) and cached.get("conv_id"):
         cached_model = cached.get("model")
@@ -167,25 +221,15 @@ def save_conversation(
 
     cache = load_cache()
 
-    old_fingerprint = None
-    for key in list(cache.keys()):
-        if key.startswith("user_fp_"):
-            value = cache[key]
-            if isinstance(value, dict) and value.get("conv_id") == conversation_id:
-                old_fingerprint = key.replace("user_fp_", "")
-                del cache[key]
-                break
-
-    if old_fingerprint:
-        safe_print(f"Deleted old fingerprint: {old_fingerprint}")
-
-    cache[f"user_fp_{new_fingerprint}"] = {
+    scoped_key = _scoped_fingerprint_key(new_fingerprint, model, tools_hash(tools))
+    cache[scoped_key] = {
         "conv_id": conversation_id,
         "parent_message_id": parent_message_id,
         "tools_hash": tools_hash(tools),
         "model": model,
     }
     cache[f"tools_{conversation_id}"] = tools_hash(tools)
+    cache[f"model_{conversation_id}"] = model
     cache["last_conv_id"] = conversation_id
     save_cache(cache)
     safe_print(f"Saved conversation: {conversation_id} with fingerprint: {new_fingerprint}")

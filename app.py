@@ -3,17 +3,21 @@ import json
 import uuid
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from chatgpt_web import ChatGPTWebClient
+from reverse_chatgpt.chatgpt_web import ChatGPTWebClient
 from core.chat_controller import (
     ChatCompletionController,
     ModelNotFoundError,
     NoUserMessageError,
 )
-from core.models import DEFAULT_MODEL, normalize_model, openai_model_list
+from core.models import DEFAULT_MODEL, is_gemini_model, normalize_model, openai_model_list
+from core.models import is_claude_model
+from reverse_gemini.client import GeminiWebClient
+from reverse_claude.client import ClaudeWebClient
 
 
 def safe_print(msg: str) -> None:
@@ -25,6 +29,7 @@ def safe_print(msg: str) -> None:
             print(msg)
         except Exception:
             pass
+
 
 
 class ChatMessage(BaseModel):
@@ -43,6 +48,8 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = None
     tools: Optional[List[Dict[str, Any]]] = None
     conversation_id: Optional[str] = Field(None, alias="conversation_id")
+    parent_message_id: Optional[str] = None
+    response_id: Optional[str] = None
 
 
 class ChatCompletionChoice(BaseModel):
@@ -58,17 +65,22 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: List[ChatCompletionChoice]
     conversation_id: Optional[str] = None
+    parent_message_id: Optional[str] = None
+    response_id: Optional[str] = None
 
 
 client: Optional[ChatGPTWebClient] = None
 controller: Optional[ChatCompletionController] = None
+gemini_client: Optional[GeminiWebClient] = None
+gemini_controller: Optional[ChatCompletionController] = None
+claude_client: Optional[ClaudeWebClient] = None
+claude_controller: Optional[ChatCompletionController] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client, controller
+    global client, controller, gemini_client, gemini_controller, claude_client, claude_controller
     safe_print("Starting ChatGPT Web API...")
-    from pathlib import Path
     user_data_dir = str(Path(__file__).parent / "chrome_data")
     client = await ChatGPTWebClient.create(user_data_dir=user_data_dir)
     controller = ChatCompletionController(client)
@@ -78,7 +90,38 @@ async def lifespan(app: FastAPI):
         safe_print("Shutting down client...")
         await client.close()
         safe_print("Client closed")
+    if gemini_client:
+        safe_print("Shutting down Gemini client...")
+        await gemini_client.close()
+        safe_print("Gemini client closed")
+    if claude_client:
+        safe_print("Shutting down Claude client...")
+        await claude_client.close()
+        safe_print("Claude client closed")
     controller = None
+    gemini_controller = None
+    claude_controller = None
+
+
+async def get_controller_for_model(model: str) -> ChatCompletionController:
+    global gemini_client, gemini_controller, claude_client, claude_controller
+    if is_gemini_model(model):
+        if gemini_controller is None:
+            safe_print("Initializing Gemini Web client with pure HTTP StreamGenerate...")
+            gemini_client = await GeminiWebClient.create()
+            gemini_controller = ChatCompletionController(gemini_client)
+        return gemini_controller
+
+    if is_claude_model(model):
+        if claude_controller is None:
+            safe_print("Initializing Claude Web client with pure HTTP completion...")
+            claude_client = await ClaudeWebClient.create()
+            claude_controller = ChatCompletionController(claude_client)
+        return claude_controller
+
+    if not controller:
+        raise HTTPException(status_code=500, detail="Controller not initialized")
+    return controller
 
 
 app = FastAPI(
@@ -114,11 +157,9 @@ async def generate_stream(
     request: ChatCompletionRequest,
     conv_id: Optional[str] = None
 ):
-    if not controller:
-        raise HTTPException(status_code=500, detail="Controller not initialized")
-
     messages_list = [dict(m.model_dump()) for m in request.messages]
     safe_print(f"Original messages: {len(messages_list)}")
+    active_controller = await get_controller_for_model(request.model)
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(asyncio.get_event_loop().time())
@@ -143,11 +184,12 @@ async def generate_stream(
         }
 
     try:
-        async for event in controller.stream(
+        async for event in active_controller.stream(
             messages_list,
             request.model,
             request.tools,
             conv_id,
+            request.parent_message_id or request.response_id,
         ):
             if event.delta:
                 if buffer_tool_candidate and not tool_buffer_decided:
@@ -175,6 +217,9 @@ async def generate_stream(
 
                 delta = {"tool_calls": event.tool_calls} if event.tool_calls else {"content": ""}
                 final_chunk = make_chunk(delta, event.finish_reason)
+                final_chunk["conversation_id"] = event.conversation_id
+                final_chunk["parent_message_id"] = event.parent_message_id
+                final_chunk["response_id"] = event.parent_message_id
                 yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n"
                 yield "data: [DONE]\n\n"
     except (ModelNotFoundError, NoUserMessageError) as e:
@@ -204,9 +249,6 @@ async def generate_stream(
 async def chat_completions(
     request: ChatCompletionRequest,
 ):
-    if not controller:
-        raise HTTPException(status_code=500, detail="Controller not initialized")
-
     if request.stream:
         return StreamingResponse(
             generate_stream(request, request.conversation_id),
@@ -216,11 +258,13 @@ async def chat_completions(
         messages_list = [dict(m.model_dump()) for m in request.messages]
 
         try:
-            result = await controller.complete(
+            active_controller = await get_controller_for_model(request.model)
+            result = await active_controller.complete(
                 messages_list,
                 request.model,
                 request.tools,
                 request.conversation_id,
+                request.parent_message_id or request.response_id,
             )
         except ModelNotFoundError:
             return JSONResponse(
@@ -260,7 +304,9 @@ async def chat_completions(
                 message=response_message,
                 finish_reason=result.finish_reason
             )],
-            conversation_id=result.conversation_id
+            conversation_id=result.conversation_id,
+            parent_message_id=result.parent_message_id,
+            response_id=result.parent_message_id,
         )
 
 

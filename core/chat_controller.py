@@ -88,6 +88,20 @@ def last_user_message(messages: list[dict[str, Any]]) -> str:
     raise NoUserMessageError("No user message found")
 
 
+def last_user_message_is_tool_result(messages: list[dict[str, Any]]) -> bool:
+    for msg in reversed(messages):
+        if msg.get("role") == "user" and msg.get("content"):
+            return bool(msg.get("_is_tool_result_inline"))
+    raise NoUserMessageError("No user message found")
+
+
+def last_real_user_message(messages: list[dict[str, Any]]) -> str:
+    for msg in reversed(messages):
+        if msg.get("role") == "user" and msg.get("content") and not msg.get("_is_tool_result_inline"):
+            return extract_text(msg)
+    return ""
+
+
 class ChatCompletionController:
     """Provider-neutral orchestration around a ChatGPT-like streaming backend.
 
@@ -112,6 +126,7 @@ class ChatCompletionController:
         model: str | None,
         tools: list[dict[str, Any]] | None = None,
         conversation_id: str | None = None,
+        parent_message_id: str | None = None,
     ) -> PreparedChatRequest:
         normalized_model = self.normalize_model(model)
         if normalized_model not in self.model_ids():
@@ -126,9 +141,18 @@ class ChatCompletionController:
         )
 
         conv_id = cached_conv_id or conversation_id
+        parent_id = parent_message_id or cached_parent_message_id
         final_message = last_user_message(prepared_messages)
+        is_tool_result_turn = last_user_message_is_tool_result(prepared_messages)
 
-        if tools:
+        if is_tool_result_turn:
+            original_request = last_real_user_message(prepared_messages)
+            if original_request:
+                final_message = (
+                    f"Runtime information:\n{final_message}"
+                )
+
+        if tools and not is_tool_result_turn:
             final_message = f"{final_message}\n\n{TOOL_CALL_REMINDER}"
 
         if conv_id is None and any(m.get("role") == "system" for m in prepared_messages):
@@ -136,7 +160,7 @@ class ChatCompletionController:
             if system_msg:
                 final_message = f"{system_msg}\n\nUser: {final_message}"
 
-        if tools_changed and tools:
+        if tools_changed and tools and not is_tool_result_turn:
             tool_prompt = build_tool_prompt(tools)
             final_message = f"{tool_prompt}\n\n{final_message}"
 
@@ -145,7 +169,7 @@ class ChatCompletionController:
             messages=prepared_messages,
             final_message=final_message,
             conversation_id=conv_id,
-            parent_message_id=cached_parent_message_id,
+            parent_message_id=parent_id,
             tools=tools,
         )
 
@@ -155,8 +179,9 @@ class ChatCompletionController:
         model: str | None,
         tools: list[dict[str, Any]] | None = None,
         conversation_id: str | None = None,
+        parent_message_id: str | None = None,
     ) -> AsyncGenerator[ChatStreamEvent, None]:
-        prepared = self.prepare(messages, model, tools, conversation_id)
+        prepared = self.prepare(messages, model, tools, conversation_id, parent_message_id)
         full_response = ""
         found_conversation_id: str | None = None
         found_parent_message_id: str | None = None
@@ -208,11 +233,12 @@ class ChatCompletionController:
         model: str | None,
         tools: list[dict[str, Any]] | None = None,
         conversation_id: str | None = None,
+        parent_message_id: str | None = None,
     ) -> ChatCompletionResult:
         content = ""
         final_event: ChatStreamEvent | None = None
 
-        async for event in self.stream(messages, model, tools, conversation_id):
+        async for event in self.stream(messages, model, tools, conversation_id, parent_message_id):
             if event.delta:
                 content += event.delta
             if event.finish_reason:

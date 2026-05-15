@@ -1116,7 +1116,11 @@ class ChatGPTWebClient:
                     for (const line of lines) {
                         if (!line.startsWith("data: ")) continue;
                         const d = line.slice(6).trim();
-                        if (!d || d === "[DONE]") continue;
+                        if (!d) continue;
+                        if (d === "[DONE]") {
+                            events.push({ type: "done" });
+                            continue;
+                        }
                         try {
                             const parsed = JSON.parse(d);
                             events.push(parsed);
@@ -1169,6 +1173,29 @@ class ChatGPTWebClient:
                         (typeof p === "string" && p.length > 0) ||
                         (typeof p === "object" && p && (p.text || p.value || p.content))
                     );
+                }
+
+                function hasTerminalSignal(value, depth = 0) {
+                    if (!value || depth > 6 || typeof value !== "object") return false;
+                    const terminalTypes = [
+                        "done",
+                        "complete",
+                        "message_stream_complete",
+                        "conversation_turn_complete",
+                        "conversation_turn_finished",
+                    ];
+                    if (terminalTypes.includes(value.type)) return true;
+                    if (value.status === "finished_successfully") return true;
+                    if (value.end_turn === true) return true;
+                    if (Array.isArray(value)) {
+                        return value.some(item => hasTerminalSignal(item, depth + 1));
+                    }
+                    for (const key of ["message", "v", "payload", "data", "body", "event"]) {
+                        if (value[key] && hasTerminalSignal(value[key], depth + 1)) {
+                            return true;
+                        }
+                    }
+                    return false;
                 }
 
                 function stripMessagePrefix(pointer) {
@@ -1262,6 +1289,20 @@ class ChatGPTWebClient:
                         if (typeof dataVal !== "object") continue;
 
                         // --- o: "add" → new message created ---
+                        if (!dataVal.o && !(dataVal.v && dataVal.v.message) && hasStreamTextContent() && hasTerminalSignal(dataVal)) {
+                            window._cgStream.events.push(dataVal);
+                            eventCount++;
+                            if (window._cgStream.rawWsEvents.length < 30) {
+                                const terminalType = dataVal.type || dataVal.status || "nested_terminal";
+                                window._cgStream.rawWsEvents.push(
+                                    `[terminal] ${terminalType}, finishing`
+                                );
+                            }
+                            if (skipFinish) return true;
+                            scheduleFinish("finish_event");
+                            return true;
+                        }
+
                         if (dataVal.o === "add" && dataVal.v && dataVal.v.message) {
                             const m = dataVal.v.message;
                             msgAccum[m.id] = JSON.parse(JSON.stringify(m));

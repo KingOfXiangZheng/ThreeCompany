@@ -84,6 +84,59 @@ CHATGPT_WEB_MODELS: list[dict[str, Any]] = [
 ]
 
 
+GEMINI_WEB_MODELS: list[dict[str, Any]] = [
+    {
+        "id": "gemini-3-pro",
+        "name": "Gemini 3 Pro (Web)",
+        "max_tokens": 32768,
+        "context_window": 1048576,
+        "reasoning_type": "auto",
+        "reasoning": True,
+        "enabled_tools": [],
+    },
+    {
+        "id": "gemini-3-thinking",
+        "name": "Gemini 3 Thinking (Web)",
+        "max_tokens": 32768,
+        "context_window": 1048576,
+        "reasoning_type": "reasoning",
+        "reasoning": True,
+        "enabled_tools": [],
+    },
+    {
+        "id": "gemini-3-fast",
+        "name": "Gemini 3 Fast (Web)",
+        "max_tokens": 32768,
+        "context_window": 1048576,
+        "reasoning_type": "none",
+        "reasoning": False,
+        "enabled_tools": [],
+    },
+]
+
+
+CLAUDE_WEB_MODELS: list[dict[str, Any]] = [
+    {
+        "id": "claude-sonnet-4-6",
+        "name": "Claude Sonnet 4.6 (Web)",
+        "max_tokens": 32768,
+        "context_window": 200000,
+        "reasoning_type": "auto",
+        "reasoning": True,
+        "enabled_tools": [],
+    },
+    {
+        "id": "claude-opus-4-5",
+        "name": "Claude Opus 4.5 (Web)",
+        "max_tokens": 32768,
+        "context_window": 200000,
+        "reasoning_type": "auto",
+        "reasoning": True,
+        "enabled_tools": [],
+    },
+]
+
+
 MODEL_ALIASES = {
     # GPT-4 compatibility aliases → GPT-5.3
     "gpt-4": DEFAULT_MODEL,
@@ -117,11 +170,29 @@ MODEL_ALIASES = {
     "gpt-5-3-instant": "gpt-5-3",
     # GPT-5.2 instant alias → gpt-5-2
     "gpt-5-2-instant": "gpt-5-2",
+    "gemini-pro": "gemini-3-pro",
+    "gemini-2.5-pro": "gemini-3-pro",
+    "gemini-3": "gemini-3-pro",
+    "gemini-3-pro": "gemini-3-pro",
+    "gemini-thinking": "gemini-3-thinking",
+    "gemini-3-thinking": "gemini-3-thinking",
+    "gemini-flash": "gemini-3-fast",
+    "gemini-fast": "gemini-3-fast",
+    "gemini-3-flash": "gemini-3-fast",
+    "gemini-3-fast": "gemini-3-fast",
+    "claude": "claude-sonnet-4-6",
+    "claude-web": "claude-sonnet-4-6",
+    "claude-sonnet": "claude-sonnet-4-6",
+    "claude-sonnet-4": "claude-sonnet-4-6",
+    "claude-sonnet-4-6": "claude-sonnet-4-6",
+    "claude-opus": "claude-opus-4-5",
+    "claude-opus-4": "claude-opus-4-5",
+    "claude-opus-4-5": "claude-opus-4-5",
 }
 
 
 def model_ids() -> set[str]:
-    return {model["id"] for model in CHATGPT_WEB_MODELS}
+    return {model["id"] for model in [*CHATGPT_WEB_MODELS, *GEMINI_WEB_MODELS, *CLAUDE_WEB_MODELS]}
 
 
 def normalize_model(model: str | None) -> str:
@@ -129,6 +200,14 @@ def normalize_model(model: str | None) -> str:
         return DEFAULT_MODEL
     normalized = model.strip().lower().replace("_", "-").replace(" ", "-")
     return MODEL_ALIASES.get(normalized, normalized)
+
+
+def is_gemini_model(model: str | None) -> bool:
+    return normalize_model(model).startswith("gemini-")
+
+
+def is_claude_model(model: str | None) -> bool:
+    return normalize_model(model).startswith("claude-")
 
 
 def openai_model_list() -> list[dict[str, Any]]:
@@ -147,5 +226,5 @@ def openai_model_list() -> list[dict[str, Any]]:
                 "enabled_tools": model["enabled_tools"],
             },
         }
-        for model in CHATGPT_WEB_MODELS
+        for model in [*CHATGPT_WEB_MODELS, *GEMINI_WEB_MODELS, *CLAUDE_WEB_MODELS]
     ]

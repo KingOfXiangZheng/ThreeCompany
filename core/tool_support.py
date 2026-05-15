@@ -258,9 +258,9 @@ def inline_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]
             while j < len(messages) and messages[j].get("role") in {"tool", "function"}:
                 tmsg = messages[j]
                 label = _tool_result_label(tmsg, tool_call_labels)
-                tool_parts.append(f"[Tool result from {label}]: {_extract_text(tmsg)}")
+                tool_parts.append(f"Result from {label}:\n{_extract_text(tmsg)}")
                 j += 1
-            tool_parts.append("Please continue based on the tool results above.")
+            tool_parts.append("Continue the answer using the information above.")
             # Discard the assistant's text content — it's the ```json tool call
             # and the tool results already provide the continuation context.
             # Only keep it if it contains non-tool-call text (unlikely but safe).
@@ -271,7 +271,7 @@ def inline_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]
         # Standalone tool/function message (without preceding assistant tool_calls)
         if role in {"tool", "function"}:
             label = _tool_result_label(msg)
-            result.append({"role": "user", "content": f"[Tool result from {label}]: {_extract_text(msg)}\n\nPlease continue based on the tool results above.", "_is_tool_result_inline": True})
+            result.append({"role": "user", "content": f"Result from {label}:\n{_extract_text(msg)}\n\nContinue the answer using the information above.", "_is_tool_result_inline": True})
             i += 1
             continue
 

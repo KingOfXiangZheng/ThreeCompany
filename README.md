@@ -24,7 +24,7 @@
 - 支持 conversation 缓存，尽量保持上下文连续
 - 支持 `fast`、`think`、`pro(gemini-3.1-pro)` 等模式
 
-# 2026-05-12：第三家 KO: Claude **claude-sont-4.6**
+# 2026-05-15：第三家 KO: Claude **claude-sont-4.6**
 
 ## 功能
 
@@ -39,7 +39,20 @@
 
 ```bash
 uv sync
+
+#1.获取凭证
+uv run ./core/refresh_browser_auth.py
+#这个会打开浏览器，登录3家平台的账户后，按照提示保存凭证，如果要使用chatgpt模型，请不要关闭浏览器
+#浏览器只需要登陆一次，会在本项目的chrome_data保存登陆信息
+
+#2.运行服务
 uv run app.py
+
+#3.使用服务
+api端口：http://localhost:8000/v1/chat/completions
+api密钥任意
+
+
 ```
 - 首次启动时会尝试连接或启动 Chrome，并使用项目目录下的 `chrome_data/` 
 - 作为独立浏览器 profile。首次使用需要在打开的 Chrome 中完成 ChatGPT 登录。

@@ -1,5 +1,6 @@
-
 # 2026-05-05：第一家 KO: ChatGPT **GPT-5.5-thinking**
+
+国内模型：https://www.openproxy.cn/token-free/
 
 ## 功能
 

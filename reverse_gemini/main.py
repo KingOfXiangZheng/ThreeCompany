@@ -36,6 +36,13 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"
 STATE_CACHE_PATH = ROOT.parent / "conv_cache" / "gemini_state.json"
 
+DEFAULT_CONFIG: dict[str, Any] = {
+    "api_base": "https://gemini.google.com",
+    "batchexecute_path": "/_/BardChatUi/data/batchexecute",
+    "hl": "zh-CN",
+    "version": "",
+}
+
 
 DEFAULT_STREAM_PATHS = [
     "/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate",
@@ -108,8 +115,14 @@ def load_config() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         cookies = json.load(f)
     with (CONFIG_DIR / "headers.json").open("r", encoding="utf-8-sig") as f:
         headers = json.load(f)
-    with (CONFIG_DIR / "config.json").open("r", encoding="utf-8-sig") as f:
-        config = json.load(f)
+    config_path = CONFIG_DIR / "config.json"
+    if config_path.exists():
+        with config_path.open("r", encoding="utf-8-sig") as f:
+            config = json.load(f)
+    else:
+        config = {}
+    for key, value in DEFAULT_CONFIG.items():
+        config.setdefault(key, value)
     return cookies, headers, config
 
 

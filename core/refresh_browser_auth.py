@@ -27,12 +27,21 @@ DEFAULT_USER_DATA_DIR = ROOT / "chrome_data"
 CHATGPT_AUTH_PATH = ROOT / "reverse_chatgpt" / "config" / "auth.local.json"
 GEMINI_COOKIES_PATH = ROOT / "reverse_gemini" / "config" / "cookies.json"
 GEMINI_HEADERS_PATH = ROOT / "reverse_gemini" / "config" / "headers.json"
+GEMINI_CONFIG_PATH = ROOT / "reverse_gemini" / "config" / "config.json"
+GEMINI_AT_TOKEN_PATH = ROOT / "reverse_gemini" / "config" / "at_token.txt"
 CLAUDE_COOKIES_PATH = ROOT / "reverse_claude" / "config" / "cookies.json"
 CLAUDE_HEADERS_PATH = ROOT / "reverse_claude" / "config" / "headers.json"
 CLAUDE_CONFIG_PATH = ROOT / "reverse_claude" / "config" / "config.json"
 
 Progress = Callable[[str], None]
 Target = Literal["chatgpt", "gemini", "claude", "all"]
+
+GEMINI_CONFIG_DEFAULTS: dict[str, Any] = {
+    "api_base": "https://gemini.google.com",
+    "batchexecute_path": "/_/BardChatUi/data/batchexecute",
+    "hl": "zh-CN",
+    "version": "",
+}
 
 
 @dataclass
@@ -65,6 +74,7 @@ class GeminiAuthSnapshot:
     user_agent: str
     cookie_count: int
     has_enid: bool
+    at_token: str | None
 
 
 @dataclass
@@ -261,6 +271,39 @@ def _has_gemini_session(cookies: list[dict[str, Any]]) -> bool:
     return "__Secure-ENID" in names or "__Secure-1PSID" in names or "SID" in names
 
 
+async def _extract_gemini_at_token(page: Page) -> str | None:
+    token = await page.evaluate(
+        r"""() => {
+            const decode = (value) => {
+                if (!value) return null;
+                try {
+                    return JSON.parse('"' + value.replace(/"/g, '\\"') + '"');
+                } catch {
+                    return value;
+                }
+            };
+            const patterns = [
+                /"SNlM0e"\s*:\s*"([^"]+)"/,
+                /\["SNlM0e"\s*,\s*"([^"]+)"\]/,
+                /"SNlM0e"\s*,\s*"([^"]+)"/,
+                /SNlM0e[^"'[\]]*["']([^"']+)["']/,
+            ];
+            const sources = [document.documentElement.innerHTML];
+            for (const script of document.scripts) {
+                if (script.textContent) sources.push(script.textContent);
+            }
+            for (const source of sources) {
+                for (const pattern of patterns) {
+                    const match = source.match(pattern);
+                    if (match && match[1]) return decode(match[1]);
+                }
+            }
+            return null;
+        }"""
+    )
+    return str(token) if token else None
+
+
 def _has_claude_session(cookies: list[dict[str, Any]]) -> bool:
     names = {str(cookie.get("name") or "") for cookie in cookies}
     return "sessionKey" in names and "lastActiveOrg" in names
@@ -364,6 +407,8 @@ async def refresh_gemini_auth(
     user_data_dir: str | Path | None = None,
     cookies_path: str | Path = GEMINI_COOKIES_PATH,
     headers_path: str | Path = GEMINI_HEADERS_PATH,
+    config_path: str | Path = GEMINI_CONFIG_PATH,
+    at_token_path: str | Path = GEMINI_AT_TOKEN_PATH,
     write: bool = True,
     timeout_seconds: int = 300,
     wait_for_login: bool = True,
@@ -397,6 +442,7 @@ async def refresh_gemini_auth(
             on_progress=on_progress,
             label="gemini",
         )
+        at_token = await _extract_gemini_at_token(page)
 
         cookie_map: dict[str, str] = {}
         for cookie in cookies:
@@ -410,6 +456,7 @@ async def refresh_gemini_auth(
             user_agent=user_agent,
             cookie_count=len(cookie_map),
             has_enid=bool(cookie_map.get("__Secure-ENID")),
+            at_token=at_token,
         )
         if write:
             cookies_file = Path(cookies_path)
@@ -433,8 +480,31 @@ async def refresh_gemini_auth(
                 json.dumps(headers, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+
+            config_file = Path(config_path)
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            config: dict[str, Any] = {}
+            if config_file.exists():
+                with config_file.open("r", encoding="utf-8-sig") as f:
+                    config = json.load(f)
+            for key, value in GEMINI_CONFIG_DEFAULTS.items():
+                config.setdefault(key, value)
+            config_file.write_text(
+                json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            if snapshot.at_token:
+                at_file = Path(at_token_path)
+                at_file.parent.mkdir(parents=True, exist_ok=True)
+                at_file.write_text(snapshot.at_token + "\n", encoding="utf-8")
             _log(on_progress, f"[gemini] wrote cookies to {cookies_file}")
             _log(on_progress, f"[gemini] refreshed user-agent in {headers_file}")
+            _log(on_progress, f"[gemini] refreshed config in {config_file}")
+            if snapshot.at_token:
+                _log(on_progress, f"[gemini] refreshed at token in {at_file}")
+            else:
+                _log(on_progress, "[gemini] WARNING: could not extract at token from page")
         return snapshot
     finally:
         if owns_session:
@@ -655,6 +725,7 @@ async def _run_cli(args: argparse.Namespace) -> None:
             "target": "gemini",
             "cookie_count": result.cookie_count,
             "has___Secure_ENID": result.has_enid,
+            "has_at_token": bool(result.at_token),
             "wrote": not args.no_write,
         }
     elif args.target == "claude":
@@ -675,6 +746,7 @@ async def _run_cli(args: argparse.Namespace) -> None:
             "chatgpt_has_access_token": bool(chatgpt.access_token),
             "gemini_cookie_count": gemini.cookie_count,
             "gemini_has___Secure_ENID": gemini.has_enid,
+            "gemini_has_at_token": bool(gemini.at_token),
             "claude_cookie_count": claude.cookie_count,
             "claude_has_sessionKey": claude.has_session_key,
             "claude_has_organization_id": bool(claude.organization_id),

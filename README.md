@@ -82,6 +82,8 @@ api密钥任意
 ![img.png](reverse_gemini/img.png)
 
 ![img.png](reverse_claude/img.png)
+
+![img.png](reverse_grok/img.png)
 ## 常见问题
 
 ### 首次请求很慢

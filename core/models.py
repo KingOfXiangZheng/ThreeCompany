@@ -137,6 +137,46 @@ CLAUDE_WEB_MODELS: list[dict[str, Any]] = [
 ]
 
 
+GROK_WEB_MODELS: list[dict[str, Any]] = [
+    {
+        "id": "grok-fast",
+        "name": "Grok Fast (Web)",
+        "max_tokens": 32768,
+        "context_window": 131072,
+        "reasoning_type": "none",
+        "reasoning": False,
+        "enabled_tools": [],
+    },
+    {
+        "id": "grok-auto",
+        "name": "Grok Auto (Web)",
+        "max_tokens": 32768,
+        "context_window": 131072,
+        "reasoning_type": "auto",
+        "reasoning": True,
+        "enabled_tools": [],
+    },
+    {
+        "id": "grok-expert",
+        "name": "Grok Expert (Web)",
+        "max_tokens": 32768,
+        "context_window": 131072,
+        "reasoning_type": "reasoning",
+        "reasoning": True,
+        "enabled_tools": [],
+    },
+    {
+        "id": "grok-heavy",
+        "name": "Grok Heavy (Web)",
+        "max_tokens": 32768,
+        "context_window": 131072,
+        "reasoning_type": "reasoning",
+        "reasoning": True,
+        "enabled_tools": [],
+    },
+]
+
+
 MODEL_ALIASES = {
     # GPT-4 compatibility aliases → GPT-5.3
     "gpt-4": DEFAULT_MODEL,
@@ -188,11 +228,24 @@ MODEL_ALIASES = {
     "claude-opus": "claude-opus-4-5",
     "claude-opus-4": "claude-opus-4-5",
     "claude-opus-4-5": "claude-opus-4-5",
+    "grok": "grok-fast",
+    "grok-web": "grok-fast",
+    "grok-fast": "grok-fast",
+    "grok-3": "grok-fast",
+    "grok-3-fast": "grok-fast",
+    "grok-4-mini": "grok-fast",
+    "grok-auto": "grok-auto",
+    "grok-expert": "grok-expert",
+    "grok-thinking": "grok-expert",
+    "grok-heavy": "grok-heavy",
 }
 
 
 def model_ids() -> set[str]:
-    return {model["id"] for model in [*CHATGPT_WEB_MODELS, *GEMINI_WEB_MODELS, *CLAUDE_WEB_MODELS]}
+    return {
+        model["id"]
+        for model in [*CHATGPT_WEB_MODELS, *GEMINI_WEB_MODELS, *CLAUDE_WEB_MODELS, *GROK_WEB_MODELS]
+    }
 
 
 def normalize_model(model: str | None) -> str:
@@ -208,6 +261,10 @@ def is_gemini_model(model: str | None) -> bool:
 
 def is_claude_model(model: str | None) -> bool:
     return normalize_model(model).startswith("claude-")
+
+
+def is_grok_model(model: str | None) -> bool:
+    return normalize_model(model).startswith("grok-")
 
 
 def openai_model_list() -> list[dict[str, Any]]:
@@ -226,5 +283,5 @@ def openai_model_list() -> list[dict[str, Any]]:
                 "enabled_tools": model["enabled_tools"],
             },
         }
-        for model in [*CHATGPT_WEB_MODELS, *GEMINI_WEB_MODELS, *CLAUDE_WEB_MODELS]
+        for model in [*CHATGPT_WEB_MODELS, *GEMINI_WEB_MODELS, *CLAUDE_WEB_MODELS, *GROK_WEB_MODELS]
     ]

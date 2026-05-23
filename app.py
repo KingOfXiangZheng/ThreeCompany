@@ -15,9 +15,10 @@ from core.chat_controller import (
     NoUserMessageError,
 )
 from core.models import DEFAULT_MODEL, is_gemini_model, normalize_model, openai_model_list
-from core.models import is_claude_model
+from core.models import is_claude_model, is_grok_model
 from reverse_gemini.client import GeminiWebClient
 from reverse_claude.client import ClaudeWebClient
+from reverse_grok.client import GrokWebClient
 
 
 def safe_print(msg: str) -> None:
@@ -75,11 +76,13 @@ gemini_client: Optional[GeminiWebClient] = None
 gemini_controller: Optional[ChatCompletionController] = None
 claude_client: Optional[ClaudeWebClient] = None
 claude_controller: Optional[ChatCompletionController] = None
+grok_client: Optional[GrokWebClient] = None
+grok_controller: Optional[ChatCompletionController] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client, controller, gemini_client, gemini_controller, claude_client, claude_controller
+    global client, controller, gemini_client, gemini_controller, claude_client, claude_controller, grok_client, grok_controller
     safe_print("Starting ChatGPT Web API...")
     user_data_dir = str(Path(__file__).parent / "chrome_data")
     client = await ChatGPTWebClient.create(user_data_dir=user_data_dir)
@@ -98,13 +101,18 @@ async def lifespan(app: FastAPI):
         safe_print("Shutting down Claude client...")
         await claude_client.close()
         safe_print("Claude client closed")
+    if grok_client:
+        safe_print("Shutting down Grok client...")
+        await grok_client.close()
+        safe_print("Grok client closed")
     controller = None
     gemini_controller = None
     claude_controller = None
+    grok_controller = None
 
 
 async def get_controller_for_model(model: str) -> ChatCompletionController:
-    global gemini_client, gemini_controller, claude_client, claude_controller
+    global gemini_client, gemini_controller, claude_client, claude_controller, grok_client, grok_controller
     if is_gemini_model(model):
         if gemini_controller is None:
             safe_print("Initializing Gemini Web client with pure HTTP StreamGenerate...")
@@ -118,6 +126,13 @@ async def get_controller_for_model(model: str) -> ChatCompletionController:
             claude_client = await ClaudeWebClient.create()
             claude_controller = ChatCompletionController(claude_client)
         return claude_controller
+
+    if is_grok_model(model):
+        if grok_controller is None:
+            safe_print("Initializing Grok Web client with pure HTTP app-chat...")
+            grok_client = await GrokWebClient.create()
+            grok_controller = ChatCompletionController(grok_client)
+        return grok_controller
 
     if not controller:
         raise HTTPException(status_code=500, detail="Controller not initialized")

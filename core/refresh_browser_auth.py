@@ -5,7 +5,7 @@ Refresh reverse-client browser authentication through Chrome CDP.
 The functions in this module connect to a Chrome instance with remote
 debugging enabled, open the target web app, wait for an authenticated browser
 session, then export cookies into the config files consumed by
-reverse_chatgpt, reverse_gemini, and reverse_claude.
+reverse_chatgpt, reverse_gemini, reverse_claude, and reverse_grok.
 """
 
 from __future__ import annotations
@@ -32,9 +32,12 @@ GEMINI_AT_TOKEN_PATH = ROOT / "reverse_gemini" / "config" / "at_token.txt"
 CLAUDE_COOKIES_PATH = ROOT / "reverse_claude" / "config" / "cookies.json"
 CLAUDE_HEADERS_PATH = ROOT / "reverse_claude" / "config" / "headers.json"
 CLAUDE_CONFIG_PATH = ROOT / "reverse_claude" / "config" / "config.json"
+GROK_COOKIES_PATH = ROOT / "reverse_grok" / "config" / "cookies.json"
+GROK_HEADERS_PATH = ROOT / "reverse_grok" / "config" / "headers.json"
+GROK_CONFIG_PATH = ROOT / "reverse_grok" / "config" / "config.json"
 
 Progress = Callable[[str], None]
-Target = Literal["chatgpt", "gemini", "claude", "all"]
+Target = Literal["chatgpt", "gemini", "claude", "grok", "all"]
 
 GEMINI_CONFIG_DEFAULTS: dict[str, Any] = {
     "api_base": "https://gemini.google.com",
@@ -85,6 +88,18 @@ class ClaudeAuthSnapshot:
     organization_id: str | None
     device_id: str | None
     has_session_key: bool
+
+
+@dataclass
+class GrokAuthSnapshot:
+    cookie: str
+    user_agent: str
+    cookie_count: int
+    has_sso: bool
+    has_cf_clearance: bool
+    statsig_id: str | None
+    challenge: str | None
+    signature: str | None
 
 
 def _log(on_progress: Progress | None, message: str) -> None:
@@ -307,6 +322,51 @@ async def _extract_gemini_at_token(page: Page) -> str | None:
 def _has_claude_session(cookies: list[dict[str, Any]]) -> bool:
     names = {str(cookie.get("name") or "") for cookie in cookies}
     return "sessionKey" in names and "lastActiveOrg" in names
+
+
+def _has_grok_session(cookies: list[dict[str, Any]]) -> bool:
+    names = {str(cookie.get("name") or "") for cookie in cookies}
+    return "sso" in names or "sso-rw" in names
+
+
+async def _extract_grok_browser_headers(page: Page) -> dict[str, str | None]:
+    values = await page.evaluate(
+        """() => {
+            const readCookie = (name) => {
+                const escaped = name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+                const match = document.cookie.match(new RegExp("(?:^|; )" + escaped + "=([^;]*)"));
+                return match ? decodeURIComponent(match[1]) : null;
+            };
+            const readStorage = (key) => {
+                try {
+                    const raw = localStorage.getItem(key) || sessionStorage.getItem(key);
+                    if (!raw) return null;
+                    try {
+                        const parsed = JSON.parse(raw);
+                        return typeof parsed === "string" ? parsed : raw;
+                    } catch {
+                        return raw;
+                    }
+                } catch {
+                    return null;
+                }
+            };
+            return {
+                statsigId:
+                    readStorage("statsig.stable_id") ||
+                    readStorage("statsigStableId") ||
+                    readStorage("x-statsig-id") ||
+                    null,
+                anonUserId: readStorage("anonUserId"),
+                challenge: readCookie("x-challenge"),
+                signature: readCookie("x-signature"),
+                i18nextLng: readCookie("i18nextLng") || readStorage("i18nextLng"),
+            };
+        }"""
+    )
+    if not isinstance(values, dict):
+        return {}
+    return {str(k): str(v) if v else None for k, v in values.items()}
 
 
 async def refresh_chatgpt_auth(
@@ -653,6 +713,126 @@ async def refresh_claude_auth(
             await session.close()
 
 
+async def refresh_grok_auth(
+    *,
+    session: BrowserSession | None = None,
+    cdp_port: int = 9222,
+    attach_only: bool = False,
+    chrome_path: str | None = None,
+    user_data_dir: str | Path | None = None,
+    cookies_path: str | Path = GROK_COOKIES_PATH,
+    headers_path: str | Path = GROK_HEADERS_PATH,
+    config_path: str | Path = GROK_CONFIG_PATH,
+    write: bool = True,
+    timeout_seconds: int = 300,
+    wait_for_login: bool = True,
+    on_progress: Progress | None = None,
+) -> GrokAuthSnapshot:
+    """Open Grok in Chrome CDP and export Grok Web cookies/config."""
+
+    owns_session = session is None
+    session = session or await connect_cdp_browser(
+        cdp_port=cdp_port,
+        attach_only=attach_only,
+        chrome_path=chrome_path,
+        user_data_dir=user_data_dir,
+        on_progress=on_progress,
+    )
+    try:
+        page = await _open_or_reuse_page(
+            session.context,
+            "https://grok.com/",
+            "grok.com",
+            on_progress=on_progress,
+        )
+        user_agent = await page.evaluate("() => navigator.userAgent")
+        if wait_for_login:
+            await _wait_for_user_confirmation(label="grok", on_progress=on_progress)
+        cookies = await _wait_for_cookie(
+            session.context,
+            ["https://grok.com"],
+            _has_grok_session,
+            timeout_seconds=timeout_seconds,
+            on_progress=on_progress,
+            label="grok",
+        )
+        extracted_headers = await _extract_grok_browser_headers(page)
+        cookie_header = _cookie_header(cookies)
+        cookie_names = {str(cookie.get("name") or "") for cookie in cookies}
+        snapshot = GrokAuthSnapshot(
+            cookie=cookie_header,
+            user_agent=user_agent,
+            cookie_count=len(cookies),
+            has_sso="sso" in cookie_names or "sso-rw" in cookie_names,
+            has_cf_clearance="cf_clearance" in cookie_names,
+            statsig_id=extracted_headers.get("statsigId"),
+            challenge=extracted_headers.get("challenge"),
+            signature=extracted_headers.get("signature"),
+        )
+
+        if write:
+            cookies_file = Path(cookies_path)
+            cookies_file.parent.mkdir(parents=True, exist_ok=True)
+            cookies_file.write_text(
+                json.dumps({"cookie": snapshot.cookie}, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            headers_file = Path(headers_path)
+            headers_file.parent.mkdir(parents=True, exist_ok=True)
+            headers: dict[str, Any] = {}
+            if headers_file.exists():
+                with headers_file.open("r", encoding="utf-8-sig") as f:
+                    headers = json.load(f)
+            headers.update(
+                {
+                    "user-agent": snapshot.user_agent,
+                    "accept-language": headers.get("accept-language", "en-US,en;q=0.5"),
+                    "referer": "https://grok.com/",
+                }
+            )
+            if snapshot.statsig_id:
+                headers["x-statsig-id"] = snapshot.statsig_id
+            if snapshot.challenge:
+                headers["x-challenge"] = snapshot.challenge
+            if snapshot.signature:
+                headers["x-signature"] = snapshot.signature
+            headers_file.write_text(
+                json.dumps(headers, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            config_file = Path(config_path)
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            config: dict[str, Any] = {}
+            if config_file.exists():
+                with config_file.open("r", encoding="utf-8-sig") as f:
+                    config = json.load(f)
+            config.setdefault("api_base", "https://grok.com")
+            config.setdefault("default_mode_id", "fast")
+            config.setdefault("temporary", False)
+            config.setdefault("disable_search", False)
+            config.setdefault("enable_image_generation", True)
+            config.setdefault("enable_image_streaming", True)
+            config.setdefault("image_generation_count", 2)
+            config.setdefault("timeout_seconds", 120)
+            config.setdefault("transport", "curl_cffi")
+            config_file.write_text(
+                json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            _log(on_progress, f"[grok] wrote cookies to {cookies_file}")
+            _log(on_progress, f"[grok] refreshed headers in {headers_file}")
+            _log(on_progress, f"[grok] refreshed config in {config_file}")
+            if not snapshot.challenge or not snapshot.signature:
+                _log(on_progress, "[grok] WARNING: x-challenge/x-signature cookies were not visible to JS")
+        return snapshot
+    finally:
+        if owns_session:
+            await session.close()
+
+
 async def refresh_all_auth(
     *,
     cdp_port: int = 9222,
@@ -663,8 +843,8 @@ async def refresh_all_auth(
     timeout_seconds: int = 300,
     wait_for_login: bool = True,
     on_progress: Progress | None = None,
-) -> tuple[ChatGPTAuthSnapshot, GeminiAuthSnapshot, ClaudeAuthSnapshot]:
-    """Refresh ChatGPT, Gemini, and Claude auth using one CDP browser connection."""
+) -> tuple[ChatGPTAuthSnapshot, GeminiAuthSnapshot, ClaudeAuthSnapshot, GrokAuthSnapshot]:
+    """Refresh ChatGPT, Gemini, Claude, and Grok auth using one CDP browser connection."""
 
     session = await connect_cdp_browser(
         cdp_port=cdp_port,
@@ -695,7 +875,14 @@ async def refresh_all_auth(
             wait_for_login=wait_for_login,
             on_progress=on_progress,
         )
-        return chatgpt, gemini, claude
+        grok = await refresh_grok_auth(
+            session=session,
+            write=write,
+            timeout_seconds=timeout_seconds,
+            wait_for_login=wait_for_login,
+            on_progress=on_progress,
+        )
+        return chatgpt, gemini, claude, grok
     finally:
         await session.close()
 
@@ -738,8 +925,20 @@ async def _run_cli(args: argparse.Namespace) -> None:
             "has_device_id": bool(result.device_id),
             "wrote": not args.no_write,
         }
+    elif args.target == "grok":
+        result = await refresh_grok_auth(**kwargs)
+        summary = {
+            "target": "grok",
+            "cookie_count": result.cookie_count,
+            "has_sso": result.has_sso,
+            "has_cf_clearance": result.has_cf_clearance,
+            "has_statsig_id": bool(result.statsig_id),
+            "has_x_challenge": bool(result.challenge),
+            "has_x_signature": bool(result.signature),
+            "wrote": not args.no_write,
+        }
     else:
-        chatgpt, gemini, claude = await refresh_all_auth(**kwargs)
+        chatgpt, gemini, claude, grok = await refresh_all_auth(**kwargs)
         summary = {
             "target": "all",
             "chatgpt_cookie_count": chatgpt.cookie_count,
@@ -751,6 +950,12 @@ async def _run_cli(args: argparse.Namespace) -> None:
             "claude_has_sessionKey": claude.has_session_key,
             "claude_has_organization_id": bool(claude.organization_id),
             "claude_has_device_id": bool(claude.device_id),
+            "grok_cookie_count": grok.cookie_count,
+            "grok_has_sso": grok.has_sso,
+            "grok_has_cf_clearance": grok.has_cf_clearance,
+            "grok_has_statsig_id": bool(grok.statsig_id),
+            "grok_has_x_challenge": bool(grok.challenge),
+            "grok_has_x_signature": bool(grok.signature),
             "wrote": not args.no_write,
         }
 
@@ -758,8 +963,8 @@ async def _run_cli(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Refresh ChatGPT/Gemini/Claude reverse auth from Chrome CDP")
-    parser.add_argument("--target", choices=["chatgpt", "gemini", "claude", "all"], default="all")
+    parser = argparse.ArgumentParser(description="Refresh ChatGPT/Gemini/Claude/Grok reverse auth from Chrome CDP")
+    parser.add_argument("--target", choices=["chatgpt", "gemini", "claude", "grok", "all"], default="all")
     parser.add_argument("--cdp-port", type=int, default=9222)
     parser.add_argument("--attach-only", action="store_true")
     parser.add_argument("--chrome-path")

@@ -34,6 +34,17 @@
 - 支持 conversation 缓存，尽量保持上下文连续
 - 支持 `sont-4.6`、`sont-4.5` 等模型，但是免费账户有限制，达到限制之后会报429
 
+# 2026-05-23：第四家 : Grok **grok-fast**
+
+## 功能
+
+- OpenAI 兼容接口：`/v1/chat/completions`、`/v1/models`
+- 支持流式响应：`stream: true`
+- 支持 conversation 缓存，使用 Grok `conversation_id` + assistant `response_id` 续聊
+- 支持 `grok-fast`、`grok-auto`、`grok-expert`、`grok-heavy` 等模型别名
+- 运行时为纯 HTTP `app-chat`，不依赖浏览器自动化；Chrome/CDP 只用于刷新登录态
+- 动态生成 `x-statsig-id`，避免复用静态签名导致 403
+
 
 ## 启动
 
@@ -61,6 +72,9 @@ api密钥任意
 - gpt-5-5-thinking 需要plus账号  需要浏览器协助
 - gemini-3.1-pro 需要pro账户 纯http实现
 - claude免费账户请求次数有限制，达到限制会报429
+- grok 走纯 HTTP `app-chat`，需要先用 `core/refresh_browser_auth.py --target grok --attach-only --cdp-port 9222 --no-wait-for-login` 刷新登录态
+- grok 的续聊要同时带 `conversation_id` 和 `parent_response_id`
+- grok 403 一般先检查 `reverse_grok/config/cookies.json` 和 `reverse_grok/config/headers.json`
 - 兼容所有支持openai v1/chat/completions协议的所有agent框架软件
 
 ![img.png](reverse_chatgpt/img.png)

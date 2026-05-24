@@ -10,9 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import sys
-import time
 import urllib.parse
 import uuid
 from pathlib import Path
@@ -27,15 +24,10 @@ except Exception:
 
 # Reuse existing infrastructure
 from .main import (
-    Bootstrap,
-    _read_cached_at_token,
-    _read_cached_bootstrap,
     fetch_bootstrap,
-    generate_session_id,
     is_request_error,
     load_config,
     make_session,
-    make_cookie_header,
     safe_print,
     with_query,
     build_stream_body,

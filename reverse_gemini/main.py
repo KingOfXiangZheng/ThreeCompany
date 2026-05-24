@@ -672,6 +672,7 @@ def build_stream_inner(
     client_context_id: str | None = None,
     candidate_id: str | None = None,
     conversation_token: str | None = None,
+    media_generation: bool = False,
 ) -> list[Any]:
     mode_config = gemini_mode_config(model)
     if request_id is None:
@@ -685,7 +686,11 @@ def build_stream_inner(
         if conversation_token:
             state[9] = conversation_token
     inner = [None] * 80
-    inner[0] = [message, 0, None, None, None, None, 0]
+    # Media generation (image/video) requires a special marker at index 9
+    if media_generation:
+        inner[0] = [message, 0, None, None, None, None, 0, None, None, [None, None, None, None, None, None, [[None, None, None, 1]]]]
+    else:
+        inner[0] = [message, 0, None, None, None, None, 0]
     inner[1] = ["zh-CN"]
     inner[2] = state
     if request_context_token:
@@ -721,6 +726,7 @@ def build_stream_body(
     client_context_id: str | None = None,
     candidate_id: str | None = None,
     conversation_token: str | None = None,
+    media_generation: bool = False,
 ) -> str:
     inner = build_stream_inner(
         message,
@@ -732,6 +738,7 @@ def build_stream_body(
         client_context_id=client_context_id,
         candidate_id=candidate_id,
         conversation_token=conversation_token,
+        media_generation=media_generation,
     )
     outer = [None, json.dumps(inner, ensure_ascii=False, separators=(",", ":"))]
     body = {"f.req": json.dumps(outer, ensure_ascii=False, separators=(",", ":"))}

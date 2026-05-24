@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import json
+import time
 import uuid
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
@@ -17,6 +19,8 @@ from core.chat_controller import (
 from core.models import DEFAULT_MODEL, is_gemini_model, normalize_model, openai_model_list
 from core.models import is_claude_model, is_grok_model
 from reverse_gemini.client import GeminiWebClient
+from reverse_gemini.image_gen import generate_images
+from reverse_gemini.video_gen import generate_videos
 from reverse_claude.client import ClaudeWebClient
 from reverse_grok.client import GrokWebClient
 
@@ -39,6 +43,66 @@ class ChatMessage(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
+
+
+class ImageGenerationRequest(BaseModel):
+    """OpenAI-compatible image generation request (v1/images/generations)."""
+    model: str = "gemini-3-pro"
+    prompt: str
+    n: int = 1
+    size: str = "1024x1024"
+    response_format: str = "url"  # "url" or "b64_json"
+    user: Optional[str] = None
+
+
+class ImageEditRequest(BaseModel):
+    """OpenAI-compatible image edit request (v1/images/edits)."""
+    model: str = "gemini-3-pro"
+    prompt: str
+    image: Optional[str] = None  # base64 or URL (Gemini does not support true edits)
+    n: int = 1
+    size: str = "1024x1024"
+    response_format: str = "url"
+    user: Optional[str] = None
+
+
+class ImageVariationRequest(BaseModel):
+    """OpenAI-compatible image variation request (v1/images/variations)."""
+    model: str = "gemini-3-pro"
+    image: Optional[str] = None
+    n: int = 1
+    size: str = "1024x1024"
+    response_format: str = "url"
+    user: Optional[str] = None
+
+
+class VideoGenerationRequest(BaseModel):
+    """OpenAI-compatible video generation request (v1/videos/generations)."""
+    model: str = "gemini-3-pro"
+    prompt: str
+    n: int = 1
+    size: Optional[str] = None  # "720p" or "1080p"
+    quality: str = "standard"  # "standard" or "hd"
+    user: Optional[str] = None
+
+
+class GeneratedMediaItem(BaseModel):
+    """Single generated media item in the response."""
+    url: Optional[str] = None
+    b64_json: Optional[str] = None
+    revised_prompt: Optional[str] = None
+
+
+class ImageGenerationResponse(BaseModel):
+    """OpenAI-compatible image generation response."""
+    created: int
+    data: List[GeneratedMediaItem]
+
+
+class VideoGenerationResponse(BaseModel):
+    """OpenAI-compatible video generation response."""
+    created: int
+    data: List[GeneratedMediaItem]
 
 
 class ChatCompletionRequest(BaseModel):
@@ -323,6 +387,97 @@ async def chat_completions(
             parent_message_id=result.parent_message_id,
             response_id=result.parent_message_id,
         )
+
+
+@app.post("/v1/images/generations")
+async def image_generations(request: ImageGenerationRequest):
+    """Generate images using Gemini's image generation capability."""
+    if not is_gemini_model(request.model):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "message": f"Image generation only supported for Gemini models, got: {request.model}",
+                    "type": "invalid_request_error",
+                    "code": "unsupported_model",
+                }
+            },
+        )
+
+    try:
+        loop = asyncio.get_event_loop()
+        images = await loop.run_in_executor(
+            None,
+            lambda: generate_images(
+                prompt=request.prompt,
+                model=normalize_model(request.model),
+            ),
+        )
+    except Exception as e:
+        safe_print(f"Error in image generation: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"message": str(e), "type": "api_error", "code": "internal_error"}}
+        )
+
+    data = []
+    for img in images:
+        item = GeneratedMediaItem(url=img.get("url", ""))
+        if request.response_format == "b64_json" and img.get("local_path"):
+            local_path = Path(img["local_path"])
+            if local_path.exists():
+                with open(local_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+                item.b64_json = b64
+                item.url = None  # OpenAI returns url OR b64_json
+        data.append(item)
+
+    return ImageGenerationResponse(
+        created=int(time.time()),
+        data=data,
+    )
+
+
+@app.post("/v1/videos/generations")
+async def video_generations(request: VideoGenerationRequest):
+    """Generate videos using Gemini's video generation capability."""
+    if not is_gemini_model(request.model):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "message": f"Video generation only supported for Gemini models, got: {request.model}",
+                    "type": "invalid_request_error",
+                    "code": "unsupported_model",
+                }
+            },
+        )
+
+    try:
+        loop = asyncio.get_event_loop()
+        videos = await loop.run_in_executor(
+            None,
+            lambda: generate_videos(
+                prompt=request.prompt,
+                model=normalize_model(request.model),
+            ),
+        )
+    except Exception as e:
+        safe_print(f"Error in video generation: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"message": str(e), "type": "api_error", "code": "internal_error"}}
+        )
+
+    data = []
+    for vid in videos:
+        item = GeneratedMediaItem(url=vid.get("download_url", ""))
+        data.append(item)
+
+    return VideoGenerationResponse(
+        created=int(time.time()),
+        data=data,
+    )
 
 
 if __name__ == "__main__":

@@ -215,16 +215,30 @@ def make_session(cookies: dict[str, Any], base_headers: dict[str, Any], config: 
     headers = {
         "user-agent": user_agent,
         "accept": "text/event-stream",
-        "accept-language": base_headers.get("accept-language", "zh-CN,zh;q=0.9,en;q=0.8"),
+        "accept-language": base_headers.get("accept-language", "en-US,en;q=0.5"),
+        "accept-encoding": "gzip, deflate, br, zstd",
         "content-type": "application/json",
         "origin": "https://claude.ai",
         "referer": base_headers.get("referer", "https://claude.ai/new"),
         "anthropic-client-platform": base_headers.get("anthropic-client-platform", "web_claude_ai"),
-        "connection": "close",
+        "connection": "keep-alive",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
     }
     device_id = base_headers.get("anthropic-device-id") or cookies.get("anthropic-device-id") or config.get("device_id")
     if device_id:
         headers["anthropic-device-id"] = str(device_id)
+
+    # Add Datadog RUM trace headers (critical for avoiding 403)
+    if config.get("enable_datadog_headers", True):
+        try:
+            from .datadog_tracer import generate_datadog_headers
+            datadog_headers = generate_datadog_headers()
+            headers.update(datadog_headers)
+        except ImportError:
+            pass  # Fallback: continue without Datadog headers
+
     cookie_header = make_cookie_header(cookies)
     if cookie_header:
         headers["cookie"] = cookie_header

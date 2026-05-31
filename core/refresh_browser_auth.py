@@ -321,7 +321,10 @@ async def _extract_gemini_at_token(page: Page) -> str | None:
 
 def _has_claude_session(cookies: list[dict[str, Any]]) -> bool:
     names = {str(cookie.get("name") or "") for cookie in cookies}
-    return "sessionKey" in names and "lastActiveOrg" in names
+    # Check for both session cookies AND Cloudflare clearance
+    has_session = "sessionKey" in names and "lastActiveOrg" in names
+    has_cf_clearance = "cf_clearance" in names
+    return has_session and has_cf_clearance
 
 
 def _has_grok_session(cookies: list[dict[str, Any]]) -> bool:
@@ -650,17 +653,25 @@ async def refresh_claude_auth(
         if write:
             cookies_file = Path(cookies_path)
             cookies_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Export ALL cookies including Cloudflare and Datadog cookies
+            # Critical cookies for avoiding 403:
+            # - cf_clearance, __cf_bm, _cfuvid (Cloudflare)
+            # - _dd_s (Datadog session)
+            # - activitySessionId (Claude activity tracking)
+            cookies_payload = {
+                "cookie": snapshot.cookie,
+                "lastActiveOrg": snapshot.organization_id,
+                "anthropic-device-id": snapshot.device_id,
+            }
+
+            # Add individual cookies for easier access
+            for name, value in cookie_map.items():
+                if name not in cookies_payload:
+                    cookies_payload[name] = value
+
             cookies_file.write_text(
-                json.dumps(
-                    {
-                        "cookie": snapshot.cookie,
-                        "lastActiveOrg": snapshot.organization_id,
-                        "anthropic-device-id": snapshot.device_id,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                + "\n",
+                json.dumps(cookies_payload, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
 

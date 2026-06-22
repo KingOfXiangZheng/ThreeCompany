@@ -137,6 +137,29 @@ CLAUDE_WEB_MODELS: list[dict[str, Any]] = [
 ]
 
 
+GITLAB_WEB_MODELS: list[dict[str, Any]] = [
+    {"id": "claude_sonnet_4_6", "name": "GitLab Duo Claude Sonnet 4.6", "max_tokens": 64000, "context_window": 200000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "claude_sonnet_4_5_20250929", "name": "GitLab Duo Claude Sonnet 4.5", "max_tokens": 64000, "context_window": 200000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "claude_sonnet_4_20250514", "name": "GitLab Duo Claude Sonnet 4.0", "max_tokens": 64000, "context_window": 200000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "claude_opus_4_8", "name": "GitLab Duo Claude Opus 4.8", "max_tokens": 64000, "context_window": 200000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "claude_opus_4_7", "name": "GitLab Duo Claude Opus 4.7", "max_tokens": 64000, "context_window": 200000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "claude_opus_4_6_20260205", "name": "GitLab Duo Claude Opus 4.6", "max_tokens": 64000, "context_window": 200000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "claude_opus_4_5_20251101", "name": "GitLab Duo Claude Opus 4.5", "max_tokens": 64000, "context_window": 200000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "claude_haiku_4_5_20251001", "name": "GitLab Duo Claude Haiku 4.5", "max_tokens": 8192, "context_window": 200000, "reasoning_type": "none", "reasoning": False, "enabled_tools": []},
+    {"id": "claude_fable_5", "name": "GitLab Duo Claude Fable 5", "max_tokens": 64000, "context_window": 200000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "gpt_5", "name": "GitLab Duo GPT-5.1", "max_tokens": 16384, "context_window": 128000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "gpt_5_2", "name": "GitLab Duo GPT-5.2", "max_tokens": 16384, "context_window": 128000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "gpt_5_codex", "name": "GitLab Duo GPT-5-Codex", "max_tokens": 16384, "context_window": 128000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "gpt_5_2_codex", "name": "GitLab Duo GPT-5.2-Codex", "max_tokens": 16384, "context_window": 128000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "gpt_5_3_codex", "name": "GitLab Duo GPT-5.3-Codex", "max_tokens": 16384, "context_window": 128000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "gpt_5_mini", "name": "GitLab Duo GPT-5-Mini", "max_tokens": 16384, "context_window": 128000, "reasoning_type": "none", "reasoning": False, "enabled_tools": []},
+    {"id": "gpt_5_4", "name": "GitLab Duo GPT-5.4", "max_tokens": 16384, "context_window": 128000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "gpt_5_4_mini", "name": "GitLab Duo GPT-5.4-Mini", "max_tokens": 16384, "context_window": 128000, "reasoning_type": "none", "reasoning": False, "enabled_tools": []},
+    {"id": "gpt_5_4_nano", "name": "GitLab Duo GPT-5.4-Nano", "max_tokens": 16384, "context_window": 128000, "reasoning_type": "none", "reasoning": False, "enabled_tools": []},
+    {"id": "gpt_5_5", "name": "GitLab Duo GPT-5.5", "max_tokens": 16384, "context_window": 128000, "reasoning_type": "auto", "reasoning": True, "enabled_tools": []},
+    {"id": "gemini_3_5_flash_vertex", "name": "GitLab Duo Gemini 3.5 Flash", "max_tokens": 8192, "context_window": 1000000, "reasoning_type": "none", "reasoning": False, "enabled_tools": []},
+]
+
 GROK_WEB_MODELS: list[dict[str, Any]] = [
     {
         "id": "grok-fast",
@@ -237,14 +260,49 @@ MODEL_ALIASES = {
     "grok-auto": "grok-auto",
     "grok-expert": "grok-expert",
     "grok-thinking": "grok-expert",
-    "grok-heavy": "grok-heavy",
+"grok-heavy": "grok-heavy",
+    "gitlab": "claude_sonnet_4_6",
+    "gitlab-duo": "claude_sonnet_4_6",
+    "gitlab-chat": "claude_sonnet_4_6",
+    "duo": "claude_sonnet_4_6",
+    "duo-chat": "claude_sonnet_4_6",
+    "sonnet": "claude_sonnet_4_6",
+    "sonnet-4-6": "claude_sonnet_4_6",
+    "sonnet-4-5": "claude_sonnet_4_5_20250929",
+    "sonnet-4": "claude_sonnet_4_20250514",
+    "opus": "claude_opus_4_7",
+    "opus-4-8": "claude_opus_4_8",
+    "opus-4-7": "claude_opus_4_7",
+    "opus-4-6": "claude_opus_4_6_20260205",
+    "opus-4-5": "claude_opus_4_5_20251101",
+    "haiku": "claude_haiku_4_5_20251001",
+    "haiku-4-5": "claude_haiku_4_5_20251001",
+    "fable": "claude_fable_5",
+    "fable-5": "claude_fable_5",
+    "gpt5": "gpt_5_2",
+    "gpt-5": "gpt_5_2",
+    "gpt-5-1": "gpt_5",
+    "gpt-5-2": "gpt_5_2",
+    "gpt-5-mini": "gpt_5_mini",
+    "gpt-5-codex": "gpt_5_codex",
+    "gpt-5-4": "gpt_5_4",
+    "gpt-5-5": "gpt_5_5",
+    "duo-chat-sonnet-4-6": "claude_sonnet_4_6",
+    "duo-chat-opus-4-6": "claude_opus_4_6_20260205",
+    "duo-chat-opus-4-5": "claude_opus_4_5_20251101",
+    "duo-chat-sonnet-4-5": "claude_sonnet_4_5_20250929",
+    "duo-chat-sonnet-4": "claude_sonnet_4_20250514",
+    "duo-chat-haiku-4-5": "claude_haiku_4_5_20251001",
+    "duo-chat-gpt-5-1": "gpt_5",
+    "duo-chat-gpt-5-2": "gpt_5_2",
+    "duo-chat-gpt-5-mini": "gpt_5_mini",
 }
 
 
 def model_ids() -> set[str]:
     return {
-        model["id"]
-        for model in [*CHATGPT_WEB_MODELS, *GEMINI_WEB_MODELS, *CLAUDE_WEB_MODELS, *GROK_WEB_MODELS]
+        normalize_model(model["id"])
+        for model in [*CHATGPT_WEB_MODELS, *GEMINI_WEB_MODELS, *CLAUDE_WEB_MODELS, *GROK_WEB_MODELS, *GITLAB_WEB_MODELS]
     }
 
 
@@ -267,6 +325,23 @@ def is_grok_model(model: str | None) -> bool:
     return normalize_model(model).startswith("grok-")
 
 
+_GITLAB_MODEL_IDS: set[str] = {m["id"] for m in GITLAB_WEB_MODELS}
+
+
+def is_gitlab_model(model: str | None) -> bool:
+    if not model:
+        return False
+    raw = model.strip().lower().replace(" ", "-")
+    if raw in _GITLAB_MODEL_IDS:
+        return True
+    normalized = normalize_model(model)
+    if normalized in _GITLAB_MODEL_IDS:
+        return True
+    if normalized.startswith("duo-chat-") or normalized.startswith("gitlab-"):
+        return True
+    return False
+
+
 def openai_model_list() -> list[dict[str, Any]]:
     return [
         {
@@ -283,5 +358,5 @@ def openai_model_list() -> list[dict[str, Any]]:
                 "enabled_tools": model["enabled_tools"],
             },
         }
-        for model in [*CHATGPT_WEB_MODELS, *GEMINI_WEB_MODELS, *CLAUDE_WEB_MODELS, *GROK_WEB_MODELS]
+        for model in [*CHATGPT_WEB_MODELS, *GEMINI_WEB_MODELS, *CLAUDE_WEB_MODELS, *GROK_WEB_MODELS, *GITLAB_WEB_MODELS]
     ]

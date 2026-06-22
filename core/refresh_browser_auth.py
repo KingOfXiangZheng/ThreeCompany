@@ -35,9 +35,12 @@ CLAUDE_CONFIG_PATH = ROOT / "reverse_claude" / "config" / "config.json"
 GROK_COOKIES_PATH = ROOT / "reverse_grok" / "config" / "cookies.json"
 GROK_HEADERS_PATH = ROOT / "reverse_grok" / "config" / "headers.json"
 GROK_CONFIG_PATH = ROOT / "reverse_grok" / "config" / "config.json"
+GITLAB_COOKIES_PATH = ROOT / "reverse_gitlab" / "config" / "cookies.json"
+GITLAB_HEADERS_PATH = ROOT / "reverse_gitlab" / "config" / "headers.json"
+GITLAB_CONFIG_PATH = ROOT / "reverse_gitlab" / "config" / "config.json"
 
 Progress = Callable[[str], None]
-Target = Literal["chatgpt", "gemini", "claude", "grok", "all"]
+Target = Literal["chatgpt", "gemini", "claude", "grok", "gitlab", "gitlab-pat", "all"]
 
 GEMINI_CONFIG_DEFAULTS: dict[str, Any] = {
     "api_base": "https://gemini.google.com",
@@ -100,6 +103,15 @@ class GrokAuthSnapshot:
     statsig_id: str | None
     challenge: str | None
     signature: str | None
+
+
+@dataclass
+class GitLabAuthSnapshot:
+    cookie: str
+    user_agent: str
+    cookie_count: int
+    has_session: bool
+    csrf_token: str | None
 
 
 def _log(on_progress: Progress | None, message: str) -> None:
@@ -844,6 +856,159 @@ async def refresh_grok_auth(
             await session.close()
 
 
+def _has_gitlab_session(cookies: list[dict[str, Any]]) -> bool:
+    names = {str(c.get("name") or "") for c in cookies}
+    return "_gitlab_session" in names
+
+
+async def refresh_gitlab_auth(
+    *,
+    session: BrowserSession | None = None,
+    cdp_port: int = 9222,
+    attach_only: bool = False,
+    chrome_path: str | None = None,
+    user_data_dir: str | Path | None = None,
+    cookies_path: str | Path = GITLAB_COOKIES_PATH,
+    headers_path: str | Path = GITLAB_HEADERS_PATH,
+    config_path: str | Path = GITLAB_CONFIG_PATH,
+    write: bool = True,
+    timeout_seconds: int = 300,
+    wait_for_login: bool = True,
+    on_progress: Progress | None = None,
+) -> GitLabAuthSnapshot:
+    """Open GitLab in Chrome CDP and export session cookies + config.
+
+    For GitLab Duo Chat, the primary auth is a Personal Access Token (PAT).
+    This function exports session cookies as a fallback for GraphQL-based chat,
+    and creates the config template. The user must separately configure a PAT
+    via ``--gitlab-pat`` or by editing ``config/cookies.json``.
+    """
+    owns_session = session is None
+    session = session or await connect_cdp_browser(
+        cdp_port=cdp_port,
+        attach_only=attach_only,
+        chrome_path=chrome_path,
+        user_data_dir=user_data_dir,
+        on_progress=on_progress,
+    )
+    try:
+        page = await _open_or_reuse_page(
+            session.context,
+            "https://gitlab.com/",
+            "gitlab.com",
+            on_progress=on_progress,
+        )
+        user_agent = await page.evaluate("() => navigator.userAgent")
+
+        if wait_for_login:
+            _log(on_progress, "[gitlab] Waiting for GitLab login (look for your username in the top-right)...")
+            await _wait_for_user_confirmation(label="gitlab", on_progress=on_progress)
+
+        await page.goto(
+            "https://gitlab.com/-/user_settings/personal_access_tokens",
+            wait_until="domcontentloaded",
+            timeout=timeout_seconds * 1000,
+        )
+        _log(on_progress, "[gitlab] Navigated to PAT settings page — you can create a token here.")
+
+        cookies = await _wait_for_cookie(
+            session.context,
+            ["https://gitlab.com"],
+            _has_gitlab_session,
+            timeout_seconds=timeout_seconds,
+            on_progress=on_progress,
+            label="gitlab",
+        )
+
+        csrf_token = None
+        try:
+            csrf_token = await page.evaluate(
+                '() => {'
+                '  const meta = document.querySelector(\'meta[name="csrf-token"]\');'
+                '  return meta ? meta.getAttribute("content") : null;'
+                '}'
+            )
+        except Exception:
+            pass
+
+        cookie_header = _cookie_header(cookies)
+        cookie_names = {str(cookie.get("name") or "") for cookie in cookies}
+        snapshot = GitLabAuthSnapshot(
+            cookie=cookie_header,
+            user_agent=user_agent,
+            cookie_count=len(cookies),
+            has_session="_gitlab_session" in cookie_names,
+            csrf_token=csrf_token,
+        )
+
+        if write:
+            cookies_file = Path(cookies_path)
+            cookies_file.parent.mkdir(parents=True, exist_ok=True)
+            existing_cookies: dict[str, Any] = {}
+            if cookies_file.exists():
+                with cookies_file.open("r", encoding="utf-8-sig") as f:
+                    existing_cookies = json.load(f)
+            existing_cookies["cookie"] = snapshot.cookie
+            if snapshot.csrf_token:
+                existing_cookies["csrf_token"] = snapshot.csrf_token
+            if "pat" not in existing_cookies and "personal_access_token" not in existing_cookies:
+                _log(on_progress, "[gitlab] No 'pat' found in cookies.json.")
+                _log(on_progress, "[gitlab] Create a token at: https://gitlab.com/-/user_settings/personal_access_tokens")
+                _log(on_progress, "[gitlab]   Required scopes: api, read_api")
+                _log(on_progress, "")
+                try:
+                    pat_value = input("[gitlab] Paste your GitLab Personal Access Token (or press Enter to skip): ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    _log(on_progress, "[gitlab] Skipped PAT input.")
+                    pat_value = ""
+                if pat_value:
+                    existing_cookies["pat"] = pat_value
+                    _log(on_progress, "[gitlab] PAT will be saved to cookies.json")
+            cookies_file.write_text(
+                json.dumps(existing_cookies, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            headers_file = Path(headers_path)
+            headers_file.parent.mkdir(parents=True, exist_ok=True)
+            headers: dict[str, Any] = {}
+            if headers_file.exists():
+                with headers_file.open("r", encoding="utf-8-sig") as f:
+                    headers = json.load(f)
+            headers.setdefault("user-agent", snapshot.user_agent)
+            headers.setdefault("accept-language", "en,en-US;q=0.5")
+            headers.setdefault("referer", "https://gitlab.com/")
+            headers_file.write_text(
+                json.dumps(headers, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            config_file = Path(config_path)
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            config: dict[str, Any] = {}
+            if config_file.exists():
+                with config_file.open("r", encoding="utf-8-sig") as f:
+                    config = json.load(f)
+            config.setdefault("api_base", "https://gitlab.com")
+            config.setdefault("timeout_seconds", 120)
+            config.setdefault("default_model", "duo-chat-sonnet-4-6")
+            config.setdefault("transport", "curl_cffi")
+            config_file.write_text(
+                json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            _log(on_progress, f"[gitlab] wrote cookies to {cookies_file}")
+            _log(on_progress, f"[gitlab] wrote headers to {headers_file}")
+            _log(on_progress, f"[gitlab] wrote config to {config_file}")
+            if not snapshot.csrf_token:
+                _log(on_progress, "[gitlab] WARNING: CSRF token not found (page may not be fully loaded)")
+        return snapshot
+    finally:
+        if owns_session:
+            await session.close()
+
+
 async def refresh_all_auth(
     *,
     cdp_port: int = 9222,
@@ -854,8 +1019,8 @@ async def refresh_all_auth(
     timeout_seconds: int = 300,
     wait_for_login: bool = True,
     on_progress: Progress | None = None,
-) -> tuple[ChatGPTAuthSnapshot, GeminiAuthSnapshot, ClaudeAuthSnapshot, GrokAuthSnapshot]:
-    """Refresh ChatGPT, Gemini, Claude, and Grok auth using one CDP browser connection."""
+) -> tuple[ChatGPTAuthSnapshot, GeminiAuthSnapshot, ClaudeAuthSnapshot, GrokAuthSnapshot, GitLabAuthSnapshot]:
+    """Refresh ChatGPT, Gemini, Claude, Grok, and GitLab auth using one CDP browser connection."""
 
     session = await connect_cdp_browser(
         cdp_port=cdp_port,
@@ -893,7 +1058,14 @@ async def refresh_all_auth(
             wait_for_login=wait_for_login,
             on_progress=on_progress,
         )
-        return chatgpt, gemini, claude, grok
+        gitlab = await refresh_gitlab_auth(
+            session=session,
+            write=write,
+            timeout_seconds=timeout_seconds,
+            wait_for_login=wait_for_login,
+            on_progress=on_progress,
+        )
+        return chatgpt, gemini, claude, grok, gitlab
     finally:
         await session.close()
 
@@ -948,8 +1120,22 @@ async def _run_cli(args: argparse.Namespace) -> None:
             "has_x_signature": bool(result.signature),
             "wrote": not args.no_write,
         }
+    elif args.target == "gitlab":
+        result = await refresh_gitlab_auth(**kwargs)
+        summary = {
+            "target": "gitlab",
+            "cookie_count": result.cookie_count,
+            "has_session": result.has_session,
+            "has_csrf_token": bool(result.csrf_token),
+            "wrote": not args.no_write,
+        }
+    elif args.target == "gitlab-pat":
+        if not args.gitlab_pat:
+            summary = configure_gitlab_pat(pat=None)
+        else:
+            summary = configure_gitlab_pat(pat=args.gitlab_pat)
     else:
-        chatgpt, gemini, claude, grok = await refresh_all_auth(**kwargs)
+        chatgpt, gemini, claude, grok, gitlab = await refresh_all_auth(**kwargs)
         summary = {
             "target": "all",
             "chatgpt_cookie_count": chatgpt.cookie_count,
@@ -967,6 +1153,9 @@ async def _run_cli(args: argparse.Namespace) -> None:
             "grok_has_statsig_id": bool(grok.statsig_id),
             "grok_has_x_challenge": bool(grok.challenge),
             "grok_has_x_signature": bool(grok.signature),
+            "gitlab_cookie_count": gitlab.cookie_count,
+            "gitlab_has_session": gitlab.has_session,
+            "gitlab_has_csrf_token": bool(gitlab.csrf_token),
             "wrote": not args.no_write,
         }
 
@@ -974,8 +1163,8 @@ async def _run_cli(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Refresh ChatGPT/Gemini/Claude/Grok reverse auth from Chrome CDP")
-    parser.add_argument("--target", choices=["chatgpt", "gemini", "claude", "grok", "all"], default="all")
+    parser = argparse.ArgumentParser(description="Refresh ChatGPT/Gemini/Claude/Grok/GitLab reverse auth from Chrome CDP")
+    parser.add_argument("--target", choices=["chatgpt", "gemini", "claude", "grok", "gitlab", "gitlab-pat", "all"], default="all")
     parser.add_argument("--cdp-port", type=int, default=9222)
     parser.add_argument("--attach-only", action="store_true")
     parser.add_argument("--chrome-path")
@@ -987,7 +1176,67 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read cookies as soon as a valid browser session is detected",
     )
     parser.add_argument("--no-write", action="store_true", help="Only read and validate cookies; do not update files")
+    parser.add_argument("--gitlab-pat", type=str, default=None, help="GitLab Personal Access Token for chat/completions API")
     return parser
+
+
+def configure_gitlab_pat(pat: str | None = None) -> dict[str, Any]:
+    """Configure GitLab Personal Access Token for the chat/completions API.
+
+    Supports two modes:
+    1. --gitlab-pat <token>: Write the token directly.
+    2. --gitlab-pat not provided: Prompt for the token interactively.
+    """
+    if not pat:
+        try:
+            pat = input("Enter your GitLab Personal Access Token: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nGitLab PAT configuration cancelled.")
+            return {"target": "gitlab", "status": "cancelled", "wrote": False}
+    if not pat:
+        print("No PAT provided. Skipping GitLab configuration.")
+        return {"target": "gitlab", "status": "skipped", "wrote": False}
+
+    cookies_path = GITLAB_COOKIES_PATH
+    config_path = GITLAB_CONFIG_PATH
+
+    cookies_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cookies_data = {"pat": pat}
+    with cookies_path.open("w", encoding="utf-8") as f:
+        json.dump(cookies_data, f, ensure_ascii=False, indent=2)
+
+    config_defaults = {
+        "api_base": "https://gitlab.com",
+        "timeout_seconds": 120,
+        "default_model": "duo-chat-sonnet-4-6",
+        "transport": "curl_cffi",
+    }
+    if config_path.exists():
+        try:
+            existing = json.loads(config_path.read_text("utf-8"))
+            if isinstance(existing, dict):
+                for k, v in config_defaults.items():
+                    existing.setdefault(k, v)
+                config_defaults = existing
+        except Exception:
+            pass
+    with config_path.open("w", encoding="utf-8") as f:
+        json.dump(config_defaults, f, ensure_ascii=False, indent=2)
+
+    headers_path = GITLAB_HEADERS_PATH
+    headers_path.parent.mkdir(parents=True, exist_ok=True)
+    if not headers_path.exists():
+        with headers_path.open("w", encoding="utf-8") as f:
+            json.dump({}, f, ensure_ascii=False, indent=2)
+
+    return {
+        "target": "gitlab",
+        "status": "configured",
+        "has_pat": bool(pat),
+        "wrote": True,
+    }
 
 
 def main() -> None:

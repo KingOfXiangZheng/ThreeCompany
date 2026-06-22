@@ -45,6 +45,18 @@
 - 运行时为纯 HTTP `app-chat`，不依赖浏览器自动化；Chrome/CDP 只用于刷新登录态
 - 动态生成 `x-statsig-id`，避免复用静态签名导致 403
 
+# 2026-06-12：第五家 : GitLab Duo **gitlab-duo**
+
+## 功能
+
+- OpenAI 兼容接口：`/v1/chat/completions`、`/v1/models`
+- 支持流式响应：`stream: true`
+- 支持 conversation 缓存
+- 支持 `gitlab-duo`、`gitlab-chat`、`duo`、`duo-chat` 等模型别名
+- 运行时为纯 HTTP `POST /api/v4/chat/completions`，认证方式为 Personal Access Token
+- 需要先配置 GitLab PAT（Personal Access Token），通过 `core/refresh_browser_auth.py --target gitlab` 或手动写入
+- GitLab Duo 需要 GitLab Ultimate 或 Premium 订阅，或 GitLab.com 的 Duo 功能开启
+
 
 ## 启动
 
@@ -63,6 +75,12 @@ uv run app.py
 api端口：http://localhost:8000/v1/chat/completions
 api密钥任意
 
+#4.配置GitLab凭证
+uv run python core/refresh_browser_auth.py --target gitlab
+#或手动配置:
+#复制 reverse_gitlab/config/cookies.example.json 为 reverse_gitlab/config/cookies.json
+#在 cookies.json 中填入 GitLab Personal Access Token（pat 字段）
+
 
 ```
 - 首次启动时会尝试连接或启动 Chrome，并使用项目目录下的 `chrome_data/` 
@@ -75,6 +93,9 @@ api密钥任意
 - grok 走纯 HTTP `app-chat`，需要先用 `core/refresh_browser_auth.py --target grok --attach-only --cdp-port 9222 --no-wait-for-login` 刷新登录态
 - grok 的续聊要同时带 `conversation_id` 和 `parent_response_id`
 - grok 403 一般先检查 `reverse_grok/config/cookies.json` 和 `reverse_grok/config/headers.json`
+- gitlab-duo 走纯 HTTP `POST /api/v4/chat/completions`，需要配置 GitLab Personal Access Token
+- gitlab 配置：在 `reverse_gitlab/config/cookies.json` 中填入 `pat` 字段（在 gitlab.com → Settings → Access Tokens 创建）
+- gitlab-duo 需要 GitLab Ultimate 或 Premium 订阅
 - 兼容所有支持openai v1/chat/completions协议的所有agent框架软件
 
 ![img.png](reverse_chatgpt/img.png)
@@ -84,6 +105,8 @@ api密钥任意
 ![img.png](reverse_claude/img.png)
 
 ![img.png](reverse_grok/img.png)
+
+![img.png](reverse_gitlab/img.png)
 ## 常见问题
 
 ### 首次请求很慢

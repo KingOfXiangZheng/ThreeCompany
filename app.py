@@ -17,12 +17,13 @@ from core.chat_controller import (
     NoUserMessageError,
 )
 from core.models import DEFAULT_MODEL, is_gemini_model, normalize_model, openai_model_list
-from core.models import is_claude_model, is_grok_model
+from core.models import is_claude_model, is_grok_model, is_gitlab_model
 from reverse_gemini.client import GeminiWebClient
 from reverse_gemini.image_gen import generate_images
 from reverse_gemini.video_gen import generate_videos
 from reverse_claude.client import ClaudeWebClient
 from reverse_grok.client import GrokWebClient
+from reverse_gitlab.client import GitLabWebClient
 
 
 def safe_print(msg: str) -> None:
@@ -142,11 +143,13 @@ claude_client: Optional[ClaudeWebClient] = None
 claude_controller: Optional[ChatCompletionController] = None
 grok_client: Optional[GrokWebClient] = None
 grok_controller: Optional[ChatCompletionController] = None
+gitlab_client: Optional[GitLabWebClient] = None
+gitlab_controller: Optional[ChatCompletionController] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client, controller, gemini_client, gemini_controller, claude_client, claude_controller, grok_client, grok_controller
+    global client, controller, gemini_client, gemini_controller, claude_client, claude_controller, grok_client, grok_controller, gitlab_client, gitlab_controller
     safe_print("Starting ChatGPT Web API...")
     user_data_dir = str(Path(__file__).parent / "chrome_data")
     client = await ChatGPTWebClient.create(user_data_dir=user_data_dir)
@@ -169,14 +172,26 @@ async def lifespan(app: FastAPI):
         safe_print("Shutting down Grok client...")
         await grok_client.close()
         safe_print("Grok client closed")
+    if gitlab_client:
+        safe_print("Shutting down GitLab client...")
+        await gitlab_client.close()
+        safe_print("GitLab client closed")
     controller = None
     gemini_controller = None
     claude_controller = None
     grok_controller = None
+    gitlab_controller = None
 
 
 async def get_controller_for_model(model: str) -> ChatCompletionController:
-    global gemini_client, gemini_controller, claude_client, claude_controller, grok_client, grok_controller
+    global gemini_client, gemini_controller, claude_client, claude_controller, grok_client, grok_controller, gitlab_client, gitlab_controller
+    if is_gitlab_model(model):
+        if gitlab_controller is None:
+            safe_print("Initializing GitLab Duo client with Workflow+WebSocket...")
+            gitlab_client = await GitLabWebClient.create()
+            gitlab_controller = ChatCompletionController(gitlab_client)
+        return gitlab_controller
+
     if is_gemini_model(model):
         if gemini_controller is None:
             safe_print("Initializing Gemini Web client with pure HTTP StreamGenerate...")

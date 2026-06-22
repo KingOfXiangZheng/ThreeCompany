@@ -191,6 +191,7 @@ class ChatCompletionController:
             conversation_id=prepared.conversation_id,
             parent_message_id=prepared.parent_message_id,
             model=prepared.model,
+            messages=prepared.messages,
         ):
             if conv_id_delta and not found_conversation_id:
                 found_conversation_id = conv_id_delta
